@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>2026年度コンピュータ部部誌</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        /* ==========================================
+           テーマ設定 (CSS変数を利用したカラーパレット)
+        ========================================== */
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #1f2937;
+            --ui-bg: rgba(255, 255, 255, 0.95);
+            --ui-border: #f3f4f6;
+            --btn-hover: #f3f4f6;
+        }
+        
+        body.theme-dark {
+            --bg-color: #111827;
+            --text-color: #f9fafb;
+            --ui-bg: rgba(17, 24, 39, 0.95);
+            --ui-border: #374151;
+            --btn-hover: #374151;
+        }
+
+        body.theme-sepia {
+            --bg-color: #f4ecd8;
+            --text-color: #5b4636;
+            --ui-bg: rgba(244, 236, 216, 0.95);
+            --ui-border: #e4d5b7;
+            --btn-hover: #e4d5b7;
+        }
+
+        /* ==========================================
+           基本スタイル・UIアニメーション設定
+        ========================================== */
+        body { 
+            margin: 0; padding: 0; 
+            background-color: var(--bg-color); 
+            color: var(--text-color); 
+            touch-action: none; /* スワイプ時のブラウザデフォルト動作(戻る等)を無効化 */
+            -webkit-tap-highlight-color: transparent; 
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        /* グラスモーフィズムUIのアニメーション */
+        .ui-overlay { 
+            transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out; 
+            background-color: var(--ui-bg);
+            border-color: var(--ui-border);
+        }
+        .ui-hidden { opacity: 0; pointer-events: none; transform: translateY(10px); }
+        .ui-hidden-top { transform: translateY(-10px); }
+        
+        /* スライダー（シークバー）のカスタムスタイル */
+        input[type=range] { -webkit-appearance: none; background: transparent; width: 100%; margin: 0; }
+        input[type=range]::-webkit-slider-thumb { 
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; 
+            background: #3b82f6; cursor: pointer; margin-top: -7px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+        }
+        input[type=range]::-webkit-slider-runnable-track { 
+            width: 100%; height: 4px; cursor: pointer; background: #cbd5e1; border-radius: 2px; 
+        }
+        
+        /* 共通ボタンホバー時の背景色 */
+        .btn-custom:hover { background-color: var(--btn-hover); }
+
+        /* スクロール領域（ズーム・横幅合わせ時）のスクロールバー非表示設定 */
+        #scroll-container {
+            -webkit-overflow-scrolling: touch;
+        }
+        #scroll-container::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="flex flex-col h-[100dvh] select-none font-sans theme-light">
+
+    <main class="flex-grow relative w-full h-full z-0 overflow-hidden">
+        
+        <div id="scroll-container" class="w-full h-full overflow-auto">
+            <div class="min-w-full min-h-full flex items-center justify-center">
+                <canvas id="pdf-render" class="object-contain transition-transform duration-200 origin-center shadow-lg"></canvas>
+            </div>
+        </div>
+        
+        <button id="pc-btn-prev" class="absolute left-4 top-1/2 -translate-y-1/2 p-4 rounded-full bg-black/10 hover:bg-black/20 text-current transition hidden lg:flex z-10 backdrop-blur-sm" title="前のページ">
+            <i data-lucide="chevron-left" class="w-8 h-8"></i>
+        </button>
+        <button id="pc-btn-next" class="absolute right-4 top-1/2 -translate-y-1/2 p-4 rounded-full bg-black/10 hover:bg-black/20 text-current transition hidden lg:flex z-10 backdrop-blur-sm" title="次のページ">
+            <i data-lucide="chevron-right" class="w-8 h-8"></i>
+        </button>
+
+        <div id="tap-zone-left" class="absolute top-0 left-0 w-1/4 h-full z-10 lg:hidden cursor-pointer"></div>
+        <div id="tap-zone-center" class="absolute top-0 left-1/4 w-1/2 h-full z-10 cursor-pointer"></div>
+        <div id="tap-zone-right" class="absolute top-0 right-0 w-1/4 h-full z-10 lg:hidden cursor-pointer"></div>
+    </main>
+
+    <header id="ui-header" class="ui-overlay fixed top-0 left-0 w-full px-4 py-3 flex justify-between items-center backdrop-blur-md border-b z-20 shadow-sm ui-hidden-top ui-hidden">
+        <div class="flex gap-2">
+            <button id="btn-theme" class="btn-custom p-2 rounded-xl transition flex items-center gap-2" title="テーマ切り替え">
+                <i data-lucide="palette" class="w-5 h-5"></i>
+                <span id="theme-label" class="text-xs font-bold hidden sm:inline">ライト</span>
+            </button>
+        </div>
+
+        <button id="btn-page-jump" class="btn-custom px-4 py-1.5 rounded-xl transition text-sm font-bold tracking-widest flex items-center gap-2">
+            <span id="page-num">0</span> <span class="opacity-50">/</span> <span id="page-count">0</span>
+        </button>
+
+        <div class="flex gap-2">
+            <button id="btn-fit-mode" class="btn-custom p-2 rounded-xl transition flex items-center gap-2" title="画面サイズ合わせ">
+                <i data-lucide="scan" class="w-5 h-5" id="icon-fit-mode"></i>
+            </button>
+        </div>
+    </header>
+
+    <footer id="ui-footer" class="ui-overlay fixed bottom-0 left-0 w-full px-4 py-4 md:px-6 md:py-5 backdrop-blur-md border-t z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] ui-hidden">
+        <div class="flex flex-col gap-4 max-w-5xl mx-auto w-full">
+            
+            <div class="flex items-center gap-4 w-full">
+                <span class="text-xs font-bold opacity-60 w-4 text-right">1</span>
+                <input type="range" id="page-slider" min="1" max="1" value="1" class="flex-grow">
+                <span id="slider-max-label" class="text-xs font-bold opacity-60 w-8 text-left">1</span>
+            </div>
+            
+            <div class="flex items-center justify-between gap-2">
+                
+                <div class="hidden md:flex items-center gap-1">
+                    <button id="btn-direction" class="btn-custom p-2.5 rounded-xl transition flex items-center gap-2" title="読み込み方向切替">
+                        <i data-lucide="arrow-left-right" class="w-5 h-5"></i>
+                        <span id="direction-label" class="text-xs font-bold">右開き</span>
+                    </button>
+                    <div class="w-px h-6 bg-current opacity-20 mx-2"></div>
+                    <button id="btn-zoom-out" class="btn-custom p-2.5 rounded-xl transition" title="縮小"><i data-lucide="zoom-out" class="w-5 h-5"></i></button>
+                    <span id="zoom-label" class="text-xs font-bold w-12 text-center">100%</span>
+                    <button id="btn-zoom-in" class="btn-custom p-2.5 rounded-xl transition" title="拡大"><i data-lucide="zoom-in" class="w-5 h-5"></i></button>
+                </div>
+
+                <div class="flex md:hidden items-center gap-4 flex-1 justify-between">
+                    <button id="mobile-btn-prev" class="btn-custom p-3 rounded-full transition"><i data-lucide="arrow-left" class="w-6 h-6"></i></button>
+                    <button id="mobile-btn-menu" class="btn-custom p-3 rounded-xl transition"><i data-lucide="more-horizontal" class="w-6 h-6"></i></button>
+                    <button id="mobile-btn-next" class="btn-custom p-3 rounded-full transition"><i data-lucide="arrow-right" class="w-6 h-6"></i></button>
+                </div>
+                
+                <div class="hidden md:flex items-center gap-2">
+                    <button id="btn-fullscreen" class="btn-custom p-2.5 rounded-xl transition" title="全画面表示">
+                        <i data-lucide="maximize" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <div id="menu-overlay" class="fixed inset-0 bg-black/60 z-30 opacity-0 pointer-events-none transition-opacity flex items-end">
+        <div style="background-color: var(--ui-bg); color: var(--text-color); border-top: 1px solid var(--ui-border);" class="w-full rounded-t-3xl p-6 shadow-2xl transform translate-y-full transition-transform duration-300 ease-out backdrop-blur-xl">
+            <div class="w-12 h-1.5 bg-current opacity-20 rounded-full mx-auto mb-6"></div>
+            <div class="space-y-2">
+                <button id="menu-direction" class="w-full flex items-center gap-4 p-4 rounded-xl btn-custom transition text-left">
+                    <i data-lucide="arrow-left-right" class="w-6 h-6 opacity-70"></i>
+                    <span class="flex-grow font-bold">読み込み方向</span>
+                    <span id="menu-direction-label" class="text-sm font-bold text-blue-500">右開き</span>
+                </button>
+                <button id="menu-theme" class="w-full flex items-center gap-4 p-4 rounded-xl btn-custom transition text-left">
+                    <i data-lucide="palette" class="w-6 h-6 opacity-70"></i>
+                    <span class="flex-grow font-bold">カラーテーマ</span>
+                    <span id="menu-theme-label" class="text-sm font-bold text-blue-500">ライト</span>
+                </button>
+                <button id="menu-fullscreen" class="w-full flex items-center gap-4 p-4 rounded-xl btn-custom transition text-left">
+                    <i data-lucide="maximize" class="w-6 h-6 opacity-70"></i>
+                    <span class="flex-grow font-bold">全画面表示</span>
+                </button>
+                <div class="h-px bg-current opacity-10 my-4"></div>
+                <button id="menu-close" class="w-full text-center p-4 rounded-xl btn-custom font-bold transition border border-current opacity-80">
+                    閉じる
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // UIアイコンの描画初期化
+        lucide.createIcons();
+
+        // ==========================================
+        // グローバル状態管理
+        // ==========================================
+        const pdfFile = 'src/sample.pdf';
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pageIsRendering = false;
+        let pageNumPending = null;
+        
+        let isRTL = true;           // 右開き(true) or 左開き(false)
+        let uiVisible = true;       // UIの表示状態フラグ
+        let currentTheme = 'light'; // 現在のカラーテーマ
+        let fitMode = 'page';       // 画面フィットモード ('page'=全体, 'width'=横幅)
+        let zoomLevel = 1.0;        // 現在のズーム倍率
+        
+        let touchStartX = 0;
+        let touchEndX = 0;
+
+        // ==========================================
+        // DOM要素のキャッシュ取得
+        // ==========================================
+        const canvas = document.querySelector('#pdf-render');
+        const ctx = canvas.getContext('2d');
+        const scrollContainer = document.querySelector('#scroll-container');
+        
+        const uiHeader = document.querySelector('#ui-header');
+        const uiFooter = document.querySelector('#ui-footer');
+        const pageNumEl = document.querySelector('#page-num');
+        const pageCountEl = document.querySelector('#page-count');
+        const sliderEl = document.querySelector('#page-slider');
+        const sliderMaxLabel = document.querySelector('#slider-max-label');
+        
+        const directionLabel = document.querySelector('#direction-label');
+        const themeLabel = document.querySelector('#theme-label');
+        const zoomLabel = document.querySelector('#zoom-label');
+        const iconFitMode = document.querySelector('#icon-fit-mode');
+        
+        const menuOverlay = document.querySelector('#menu-overlay');
+        const menuContent = menuOverlay.querySelector('div');
+        const menuDirectionLabel = document.querySelector('#menu-direction-label');
+        const menuThemeLabel = document.querySelector('#menu-theme-label');
+
+        // PDF.jsのWorker設定
+        const pdfjsLib = window['pdfjs-dist/build/pdf'];
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // ==========================================
+        // コア機能：PDFレンダリング
+        // ==========================================
+        const renderPage = num => {
+            pageIsRendering = true;
+            pdfDoc.getPage(num).then(page => {
+                const viewportUnscaled = page.getViewport({ scale: 1 });
+                
+                // コンテナのサイズを取得し、最適なスケールを算出
+                const containerWidth = scrollContainer.clientWidth;
+                const containerHeight = scrollContainer.clientHeight;
+                let scale = 1;
+
+                if (fitMode === 'width') {
+                    // 横幅に合わせる（縦スクロール許容）
+                    scale = containerWidth / viewportUnscaled.width;
+                } else {
+                    // ページ全体を画面内に収める
+                    const scaleX = containerWidth / viewportUnscaled.width;
+                    const scaleY = containerHeight / viewportUnscaled.height;
+                    scale = Math.min(scaleX, scaleY);
+                }
+
+                // ズーム倍率を適用
+                scale *= zoomLevel;
+                const viewport = page.getViewport({ scale });
+                
+                // Retinaディスプレイ等、高解像度環境での描画ぼやけ対策
+                const outputScale = window.devicePixelRatio || 1;
+                canvas.width = Math.floor(viewport.width * outputScale);
+                canvas.height = Math.floor(viewport.height * outputScale);
+                canvas.style.width = Math.floor(viewport.width) + "px";
+                canvas.style.height = Math.floor(viewport.height) + "px";
+
+                const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+                const renderCtx = { canvasContext: ctx, transform: transform, viewport: viewport };
+
+                // 描画処理の実行
+                page.render(renderCtx).promise.then(() => {
+                    pageIsRendering = false;
+                    // 描画待ちのページがあれば続けて処理
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+
+                // UI側のページ番号表示とスライダーを更新
+                pageNumEl.textContent = num;
+                sliderEl.value = num;
+                
+                // ページ移動時はスクロール位置を最上部へリセット
+                scrollContainer.scrollTop = 0;
+            });
+        };
+
+        // 描画中ならキューに入れ、そうでなければ即時描画
+        const queueRenderPage = num => {
+            if (pageIsRendering) { pageNumPending = num; } else { renderPage(num); }
+        };
+
+        // ==========================================
+        // ページ移動ロジック
+        // ==========================================
+        const showPrevPage = () => { if (pageNum <= 1) return; pageNum--; queueRenderPage(pageNum); };
+        const showNextPage = () => { if (pageNum >= pdfDoc.numPages) return; pageNum++; queueRenderPage(pageNum); };
+        
+        // 現在の読み込み方向（RTL/LTR）を考慮して次のページ/前のページへ移動
+        const goForward = () => { isRTL ? showPrevPage() : showNextPage(); };
+        const goBackward = () => { isRTL ? showNextPage() : showPrevPage(); };
+
+        // ユーザー入力による特定ページへのジャンプ
+        const jumpToPage = () => {
+            const input = prompt(`ジャンプするページ番号を入力してください (1 - ${pdfDoc.numPages}):`, pageNum);
+            if (input !== null) {
+                const targetPage = parseInt(input, 10);
+                if (targetPage >= 1 && targetPage <= pdfDoc.numPages) {
+                    pageNum = targetPage;
+                    queueRenderPage(pageNum);
+                } else {
+                    alert("無効なページ番号です。");
+                }
+            }
+        };
+
+        // ==========================================
+        // 初期化処理：PDFの取得
+        // ==========================================
+        pdfjsLib.getDocument(pdfFile).promise.then(pdfDoc_ => {
+            pdfDoc = pdfDoc_;
+            pageCountEl.textContent = pdfDoc.numPages;
+            sliderMaxLabel.textContent = pdfDoc.numPages;
+            sliderEl.max = pdfDoc.numPages;
+            
+            // 修正：ファイル自体のページ順は1からなので、常に1ページ目からスタートする
+            pageNum = 1;
+            renderPage(pageNum);
+            
+            // アプリ起動直後はUIを表示し、2秒後に自動で隠す
+            setTimeout(() => toggleUI(false), 2000);
+        }).catch(err => {
+            // エラーハンドリング：キャンバスに直接エラーメッセージを描画
+            ctx.fillStyle = "#888"; ctx.font = "16px sans-serif";
+            ctx.fillText(`PDFの読み込みに失敗しました。`, 20, 40);
+            ctx.fillText(`ディレクトリに src/sample.pdf があるか確認してください。`, 20, 70);
+        });
+
+        // ==========================================
+        // 各種UI・機能コントロール
+        // ==========================================
+
+        // UI全体の表示/非表示トグル
+        const toggleUI = (show) => {
+            uiVisible = show !== undefined ? show : !uiVisible;
+            if (uiVisible) {
+                uiHeader.classList.remove('ui-hidden', 'ui-hidden-top');
+                uiFooter.classList.remove('ui-hidden');
+            } else {
+                uiHeader.classList.add('ui-hidden', 'ui-hidden-top');
+                uiFooter.classList.add('ui-hidden');
+            }
+        };
+
+        // 読み込み方向（右開き/左開き）の切り替え
+        const toggleDirection = () => {
+            isRTL = !isRTL;
+            directionLabel.textContent = isRTL ? "右開き" : "左開き";
+            menuDirectionLabel.textContent = isRTL ? "右開き" : "左開き";
+        };
+
+        // 画面フィットモード（全体/横幅）の切り替え
+        const toggleFitMode = () => {
+            fitMode = fitMode === 'page' ? 'width' : 'page';
+            iconFitMode.setAttribute('data-lucide', fitMode === 'page' ? 'scan' : 'move-horizontal');
+            lucide.createIcons();
+            
+            // モード切り替え時はズーム倍率をリセットする
+            zoomLevel = 1.0; 
+            zoomLabel.textContent = "100%";
+            queueRenderPage(pageNum);
+        };
+
+        // 手動ズームコントロール
+        const updateZoom = (delta) => {
+            zoomLevel += delta;
+            // 倍率の制限（最小0.5倍、最大3.0倍）
+            if(zoomLevel < 0.5) zoomLevel = 0.5;
+            if(zoomLevel > 3.0) zoomLevel = 3.0;
+            zoomLabel.textContent = Math.round(zoomLevel * 100) + "%";
+            queueRenderPage(pageNum);
+        };
+
+        // カラーテーマ（ライト/ダーク/セピア）の巡回切り替え
+        const cycleTheme = () => {
+            document.body.classList.remove(`theme-${currentTheme}`);
+            if (currentTheme === 'light') currentTheme = 'dark';
+            else if (currentTheme === 'dark') currentTheme = 'sepia';
+            else currentTheme = 'light';
+            
+            document.body.classList.add(`theme-${currentTheme}`);
+            
+            const themeNames = { 'light': 'ライト', 'dark': 'ダーク', 'sepia': 'セピア' };
+            themeLabel.textContent = themeNames[currentTheme];
+            menuThemeLabel.textContent = themeNames[currentTheme];
+        };
+
+        // フルスクリーン切り替え（Safari・スマホ対応版）
+        const toggleFullscreen = () => {
+            const doc = window.document;
+            const docEl = doc.documentElement;
+
+            // 各ブラウザ用のプレフィックスを考慮
+            const requestFullScreen = docEl.requestFullscreen || docEl.webkitRequestFullScreen || docEl.mozRequestFullScreen || docEl.msRequestFullscreen;
+            const cancelFullScreen = doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen;
+
+            if (!doc.fullscreenElement && !doc.webkitFullscreenElement && !doc.mozFullScreenElement && !doc.msFullscreenElement) {
+                if (requestFullScreen) {
+                    requestFullScreen.call(docEl).catch(() => {});
+                }
+            } else {
+                if (cancelFullScreen) {
+                    cancelFullScreen.call(doc);
+                }
+            }
+        };
+
+        // スマホ用ボトムメニューのアニメーション開閉
+        const openMenu = () => {
+            menuOverlay.classList.remove('opacity-0', 'pointer-events-none');
+            menuContent.classList.remove('translate-y-full');
+        };
+        const closeMenu = () => {
+            menuOverlay.classList.add('opacity-0', 'pointer-events-none');
+            menuContent.classList.add('translate-y-full');
+        };
+
+        // ==========================================
+        // イベントリスナーの登録
+        // ==========================================
+        
+        // 画面中央タップでUIトグル
+        document.querySelector('#tap-zone-center').addEventListener('click', () => toggleUI());
+        // ページ番号表示部タップでジャンププロンプトを開く
+        document.querySelector('#btn-page-jump').addEventListener('click', jumpToPage);
+
+        // PC用操作ボタン
+        document.querySelector('#pc-btn-prev').addEventListener('click', (e) => { e.stopPropagation(); goForward(); });
+        document.querySelector('#pc-btn-next').addEventListener('click', (e) => { e.stopPropagation(); goBackward(); });
+        
+        // スマホ用タップ領域と操作ボタン
+        document.querySelector('#tap-zone-left').addEventListener('click', () => goForward());
+        document.querySelector('#tap-zone-right').addEventListener('click', () => goBackward());
+        document.querySelector('#mobile-btn-prev').addEventListener('click', (e) => { e.stopPropagation(); goForward(); });
+        document.querySelector('#mobile-btn-next').addEventListener('click', (e) => { e.stopPropagation(); goBackward(); });
+        document.querySelector('#mobile-btn-menu').addEventListener('click', (e) => { e.stopPropagation(); openMenu(); });
+        
+        // ヘッダー・フッターの機能ボタン
+        document.querySelector('#btn-theme').addEventListener('click', cycleTheme);
+        document.querySelector('#btn-fit-mode').addEventListener('click', toggleFitMode);
+        document.querySelector('#btn-direction').addEventListener('click', toggleDirection);
+        document.querySelector('#btn-fullscreen').addEventListener('click', toggleFullscreen);
+        document.querySelector('#btn-zoom-in').addEventListener('click', () => updateZoom(0.2));
+        document.querySelector('#btn-zoom-out').addEventListener('click', () => updateZoom(-0.2));
+
+        // スマホメニュー内のリストアイテム
+        document.querySelector('#menu-direction').addEventListener('click', () => { toggleDirection(); closeMenu(); });
+        document.querySelector('#menu-theme').addEventListener('click', () => { cycleTheme(); closeMenu(); });
+        document.querySelector('#menu-fullscreen').addEventListener('click', () => { toggleFullscreen(); closeMenu(); });
+        document.querySelector('#menu-close').addEventListener('click', closeMenu);
+        menuOverlay.addEventListener('click', (e) => { if(e.target === menuOverlay) closeMenu(); });
+
+        // スライダー（シークバー）操作によるページ移動
+        sliderEl.addEventListener('input', (e) => { 
+            pageNum = Number(e.target.value); 
+            queueRenderPage(pageNum); 
+        });
+
+        // スワイプによるページめくり判定処理
+        scrollContainer.addEventListener('touchstart', e => { 
+            touchStartX = e.changedTouches[0].screenX; 
+        }, { passive: true });
+        
+        scrollContainer.addEventListener('touchend', e => { 
+            touchEndX = e.changedTouches[0].screenX; 
+            const swipeThreshold = 50; // スワイプと判定する最低移動ピクセル数
+            const diff = touchEndX - touchStartX;
+            
+            // 横幅合わせモード、またはズーム中の場合は、スクロール操作と競合するためスワイプめくりを無効化
+            if (fitMode === 'width' || zoomLevel > 1.0) return;
+
+            if (diff > swipeThreshold) { goBackward(); } 
+            else if (diff < -swipeThreshold) { goForward(); }
+        }, { passive: true });
+
+        // ウィンドウのリサイズ対応とキーボードショートカット
+        window.addEventListener('resize', () => { if(pdfDoc) queueRenderPage(pageNum); });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') goForward();
+            if (e.key === 'ArrowRight') goBackward();
+            if (e.key === 'Escape') { toggleUI(false); closeMenu(); }
+        });
+
+    </script>
+</body>
+</html>
